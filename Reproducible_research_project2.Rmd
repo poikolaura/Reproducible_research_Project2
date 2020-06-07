@@ -1,0 +1,150 @@
+---
+title: "Evaluation of storm data events in the United States"
+author: "Me"
+date: "1 6 2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+## Synopsis
+
+
+The code evaluates the harmfulness of natural events to human health and economy. The database used in this evaluation is maintained by National Oceanic and Atmospheric Admistration (NOOA) (1950-2011). 
+
+
+## Data Processing
+
+Data preprocessing included reading the data from its original source online. 
+
+```{r ReadFile, cache=TRUE, warning= FALSE, message=FALSE, echo =TRUE}
+
+library(lubridate)
+library(stringr)
+library(dplyr)
+library(plyr)
+
+# Reading the data
+download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2", "stormdata")
+data <- read.csv("stormdata",header=TRUE, sep=",")
+
+# There are 902297 records and 37 variables in the data 
+dim(data)
+
+```
+
+Data manipulation & decisions for subsetting the dataset included multiple phases. Because from 1996 onwards, all event types have been recorded to the database, a subset was chosen to be include year 1996-2011.  
+Variables STATE__, EVTYPE, BGN_DATE, END_DATE, BGN_YEAR, END_YEAR, PROPDMG, PROPDMEXP, CROPDMG, CROPDMGEXP, FATALITIES, INJURIES are included in the subset data. 
+
+```{r Subset, cache=TRUE, warning= FALSE, message=FALSE, echo =TRUE}
+# Changing variables of 'begin date' and 'end date' from factor to Date format
+
+data$BGN_DATE <- mdy_hms(data$BGN_DATE)
+data$END_DATE <- mdy_hms(data$END_DATE)
+data$BGN_YEAR <- year(data$BGN_DATE)
+data$END_YEAR <- year(data$END_DATE)
+
+# Check occurrences of events per year
+table(data$BGN_YEAR)
+
+# From 1996 onwards, all event types have been recorded which also shows in numbers of events recorded. 
+
+# Subset of the date is decided to include years 1996-2011. Only variables of STATE__, EVTYPE, BGN_DATE, END_DATE, BGN_YEAR, END_YEAR, PROPDMG, PROPDMEXP, CROPDMG, CROPDMGEXP, FATALITIES, INJURIES
+
+myvars <- c("STATE__", "EVTYPE", "BGN_DATE", "END_DATE", "BGN_YEAR", "END_YEAR", "PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP", "FATALITIES", "INJURIES")
+
+data9611 <- data[data$BGN_YEAR >= 1996, ]
+
+subdata <- data9611[myvars]
+dim(subdata)
+```
+
+The expoment values had to be change to correspond correct numbers (e.g. billions (b -> 9)). After that, the total values of damages could be calculated. 
+
+```{r ManipulateAndCompute, cache=TRUE, warning= FALSE, message=FALSE, echo =TRUE}
+# Rename correct exponent values to dataset
+revalue(subdata$PROPDMGEXP, c("-" = "0", "+" = "1", "?" = "0", "h" = "2", "H" = "2", "k" = "3", "K" = "3", "m" = "6", "M" = "6", "b" = "9", "B" = "9"))
+revalue(subdata$CROPDMGEXP, c("-" = "0", "+" = "1", "?" = "0", "h" = "2", "H" = "2", "k" = "3", "K" = "3", "m" = "6", "M" = "6", "b" = "9", "B" = "9"))
+
+# Convert them to numbers 
+subdata$PROPDMGEXP <- as.numeric(subdata$PROPDMGEXP)
+subdata$CROPDMGEXP <- as.numeric(subdata$CROPDMGEXP)
+
+# Calculate total damages to new variables 
+subdata$Tot_PropDMG <- (subdata$PROPDMG * (10^subdata$PROPDMGEXP))
+subdata$Tot_CropDMG <- (subdata$CROPDMG * (10^subdata$CROPDMGEXP))
+subdata$TotDMGcosts <- subdata$Tot_PropDMG + subdata$Tot_CropDMG
+
+```
+
+Clean up of the EVTYPE variable was laboursome. Variable values were switched to lower case, extra spaces were removed to match more cases. 
+
+```{r EVTYPEManipulation, cache=TRUE, warning= FALSE, message=FALSE, echo =TRUE}
+# There are 48 different event types in the data
+EventTypes <- c("Astronomical Low Tide", "Avalanche", "Blizzard", "Coastal Flood", "Cold/Wind Chill", "Debris Flow", "Dense Fog", "Dense Smoke", "Drought", "Dust Devil", "Dust Storm", "Excessive Heat", "Extreme Cold/Wind Chill", "Flash Flood", "Flood", "Frost/Freeze", "Funnel Cloud", "Freezing Fog", "Hail", "Heat", "Heavy Rain", "Heavy Snow", "High Surf", "High Wind", "Hurricane (Typhoon)", "Ice Storm", "Lake-Effect Snow", "Lakeshore Flood", "Lightning", "Marine Hail", "Marine High Wind", "Marine Strong Wind", "Marine Thunderstorm Wind", "Rip Current", "Seiche", "Sleet", "Storm Surge/Tide", "Strong Wind", "Thunderstorm Wind", "Tornado", "Tropical Depression", "Tropical Storm", "Tsunami", "Volcanic Ash", "Waterspout", "Wildfire", "Winter Storm", "Winter Weather")
+
+# The event types in EVTYPE variable have multiple issues that need to be cleaned: 
+
+# Switch all text to lower case 
+subdata$EVTYPE <- tolower(subdata$EVTYPE)
+
+# Delete events where "summary" is mentioned
+subdata <- subdata[!grepl("summary", subdata$EVTYPE),]
+
+# Remove extra spaces
+subdata$EVTYPE <- gsub("\\s+", " ", subdata$EVTYPE)
+subdata$EVTYPE <- trimws(subdata$EVTYPE)
+
+# Matching the data with EventTypes
+subdata$match <- amatch(subdata$EVTYPE, EventTypes, maxDist = 4)
+subdata <- subdata[is.na(subdata$match) == FALSE,]
+
+# Matched data
+matches <- subset(subdata, EVTYPE > 0)
+matches$EVTYPE <- toupper(matches$EVTYPE)
+```
+
+Data was aggregated for the final plotting. 
+
+```{r AggregatedData, cache=TRUE, warning= FALSE, message=FALSE, echo =TRUE}
+
+# Aggregate data sums by event type
+agg_matches <- aggregate(cbind(matches$Tot_PropDMG, matches$Tot_PropDMG, matches$TotDMGcosts, matches$FATALITIES, matches$INJURIES), by = list(Events = matches$EVTYPE), FUN=sum)
+names(agg_matches) <- c("Events", "Tot_PropDMG", "Tot_PropDMG", "TotDMGcosts", "FATALITIES", "INJURIES")
+
+```
+
+
+## Results 
+
+# Threats to population health
+
+The data is ordered by fatality of the event. Top 10 event types are taken into evaluation. 
+
+```{r ThreatstoPop, cache=TRUE, warning= FALSE, message=FALSE, echo =TRUE}
+
+# Data ordered by fatality
+ordered_fatalities <- agg_matches[with(agg_matches, order(-FATALITIES)),]
+
+# Data of top 10 fatal events for plotting
+top10fatalities <- ordered_fatalities[1:10,]
+barplot(top10fatalities$FATALITIES, main="Most harmful events to population health in the United States (1996-2011)", names.arg=top10fatalities$Events, col="blue", las=2)
+
+```
+
+# Economic costs 
+
+The data is ordered by total costs caused by the event including property and crop damages. Top 10 event types are taken into evaluation. 
+
+```{r Economic costs, cache=TRUE, warning= FALSE, message=FALSE, echo =TRUE}
+
+# Data ordered by total economic costs 
+ordered_Tot_costs <- agg_matches[with(agg_matches, order(-TotDMGcosts)),]
+
+# Data of top 10 events in damage costs for plotting
+top10Tot_costs <- ordered_Tot_costs[1:10,]
+barplot(top10Tot_costs$TotDMGcosts, main="Economically most harmful events in the United States (1996-2011)", names.arg=top10Tot_costs$Events, col="red", las=2)
+
+
+```
+
